@@ -3,17 +3,57 @@ title: "Heart_deconvolution"
 output: html_document
 ---
 
+##Import library
 ```{r}
 library(Giotto)
 library(ggplot2)
 library(scatterpie)
+library(data.table)
 ```
 
 ##Here is an example for tutorial by using spatial transcriptomic data of Sample 10, W6 in Asp et al.
+##Identification of marker gene expression in single cell
+```{r}
+sc_meta<-read.table("../datasets/heart_development_ST/sc_meta.txt",header = F,row.names = 1)
+sc_data<-read.table("../datasets/heart_development_ST/all_cells_count_matrix_filtered.tsv",header = T,row.names = 1)
+
+my_python_path = "/Users/rd494/miniconda3/bin/python"
+instrs = createGiottoInstructions(python_path = my_python_path)
+heart_sc <- createGiottoObject(raw_exprs = sc_data,instructions = instrs)
+heart_sc <- normalizeGiotto(gobject = heart_sc, scalefactor = 6000, verbose = T)
+heart_sc <- calculateHVG(gobject = heart_sc)
+gene_metadata = fDataDT(heart_sc)
+featgenes = gene_metadata[hvg == 'yes']$gene_ID
+
+heart_sc <- runPCA(gobject = heart_sc, genes_to_use = featgenes, scale_unit = F)
+signPCA(heart_sc, genes_to_use = featgenes, scale_unit = F)
+
+#######calculate Sig for deconvolution, This step use DEG function implemented in Giotto
+heart_sc@cell_metadata$leiden_clus <- as.character(sc_meta$V3)
+scran_markers_subclusters = findMarkers_one_vs_all(gobject = heart_sc,
+                                                   method = 'scran',
+                                                   expression_values = 'normalized',
+                                                   cluster_column = 'leiden_clus')
+Sig_scran <- unique(scran_markers_subclusters$genes[which(scran_markers_subclusters$ranking <= 100)])
+
+########Calculate median expression value of signature genes in each cell type
+norm_exp<-2^(heart_sc@norm_expr)-1
+id<-heart_sc@cell_metadata$leiden_clus
+ExprSubset<-norm_exp[Sig_scran,]
+Sig_exp<-NULL
+for (i in unique(id)){
+  Sig_exp<-cbind(Sig_exp,(apply(ExprSubset,1,function(y) mean(y[which(id==i)]))))
+}
+colnames(Sig_exp)<-unique(id)
+```
+
+##Spatial transcriptomic data analysis
 ```{r}
 ##The heart spatial transcriptomic data is from Asp et al "A Spatiotemporal Organ-Wide Gene Expression and Cell Atlas of the Developing Human Heart".
+
 spatial_loc<-read.table(file="../datasets/heart_development_ST/sample10_w6_loc.txt",header = F)
 spatial_exp<-read.table(file="../datasets/heart_development_ST/sample10_w6_exp.txt",header = T,row.names = 1)
+
 
 ##Transform ensemble gene to official gene name
 ens2gene<-read.table(file="../datasets/heart_development_ST/ens2symbol.txt",row.names = 1)
@@ -21,9 +61,7 @@ inter_ens<-intersect(rownames(spatial_exp),rownames(ens2gene))
 filter_spatial_exp<-spatial_exp[inter_ens,]
 rownames(filter_spatial_exp)<-as.character(ens2gene[inter_ens,])
 
-##Generate Giotto objects and analyse data
-python_path <- "/Users/rd494/miniconda3/bin/python"
-instrs = createGiottoInstructions(python_path = python_path)
+##Generate Giotto objects and cluster spots
 heart_w6_sample10_st <- createGiottoObject(raw_exprs = filter_spatial_exp,spatial_locs = spatial_loc,
                                            instructions = instrs)
 heart_w6_sample10_st <- filterGiotto(gobject = heart_w6_sample10_st,
@@ -41,13 +79,10 @@ signPCA(heart_w6_sample10_st, genes_to_use = featgenes, scale_unit = F)
 heart_w6_sample10_st <- createNearestNetwork(gobject = heart_w6_sample10_st, dimensions_to_use = 1:10, k = 10)
 heart_w6_sample10_st <- doLeidenCluster(gobject = heart_w6_sample10_st, resolution = 0.4, n_iterations = 1000)
 
-##Load Signature gene, Signature genes are identified based on scran implemented in Giotto. Average expression of marker genes are calculated for each cell type
-load("../datasets/heart_development_ST/sig_exp.RData")
-
 ##Deconvolution based on signature gene expression and Giotto object
-heart_w6_sample10_st <- runDWLSDeconv(gobject = heart_w6_sample10_st, sign_matrix = Sig)
+heart_w6_sample10_st <- runDWLSDeconv(gobject = heart_w6_sample10_st, sign_matrix = Sig_exp)
 
-##plot pie
+##The result for deconvolution is stored in heart_w6_sample10_st@spatial_enrichment$DWLS. The following codes are visualization deconvolution results using pie plot
 plot_data <- as.data.frame(heart_w6_sample10_st@spatial_enrichment$DWLS)[-1]
 plot_col <- colnames(plot_data)
 plot_data$x <- as.numeric(as.character(heart_w6_sample10_st@spatial_locs$sdimx))
