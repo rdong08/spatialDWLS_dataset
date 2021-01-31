@@ -1,0 +1,61 @@
+---
+title: "Heart_deconvolution"
+output: html_document
+---
+
+```{r}
+library(Giotto)
+library(ggplot2)
+library(scatterpie)
+```
+
+##Here is an example for tutorial by using spatial transcriptomic data of Sample 10, W6 in Asp et al.
+```{r}
+##The heart spatial transcriptomic data is from Asp et al "A Spatiotemporal Organ-Wide Gene Expression and Cell Atlas of the Developing Human Heart".
+spatial_loc<-read.table(file="../datasets/heart_development_ST/sample10_w6_loc.txt",header = F)
+spatial_exp<-read.table(file="../datasets/heart_development_ST/sample10_w6_exp.txt",header = T,row.names = 1)
+
+##Transform ensemble gene to official gene name
+ens2gene<-read.table(file="../datasets/heart_development_ST/ens2symbol.txt",row.names = 1)
+inter_ens<-intersect(rownames(spatial_exp),rownames(ens2gene))
+filter_spatial_exp<-spatial_exp[inter_ens,]
+rownames(filter_spatial_exp)<-as.character(ens2gene[inter_ens,])
+
+##Generate Giotto objects and analyse data
+python_path <- "/Users/rd494/miniconda3/bin/python"
+instrs = createGiottoInstructions(python_path = python_path)
+heart_w6_sample10_st <- createGiottoObject(raw_exprs = filter_spatial_exp,spatial_locs = spatial_loc,
+                                           instructions = instrs)
+heart_w6_sample10_st <- filterGiotto(gobject = heart_w6_sample10_st,
+                                     expression_threshold = 1,
+                                     gene_det_in_min_cells = 10,
+                                     min_det_genes_per_cell = 200,
+                                     expression_values = c('raw'),
+                                     verbose = T)
+heart_w6_sample10_st <- normalizeGiotto(gobject = heart_w6_sample10_st)
+heart_w6_sample10_st <- calculateHVG(gobject = heart_w6_sample10_st)
+gene_metadata = fDataDT(heart_w6_sample10_st)
+featgenes = gene_metadata[hvg == 'yes']$gene_ID
+heart_w6_sample10_st <- runPCA(gobject = heart_w6_sample10_st, genes_to_use = featgenes, scale_unit = F)
+signPCA(heart_w6_sample10_st, genes_to_use = featgenes, scale_unit = F)
+heart_w6_sample10_st <- createNearestNetwork(gobject = heart_w6_sample10_st, dimensions_to_use = 1:10, k = 10)
+heart_w6_sample10_st <- doLeidenCluster(gobject = heart_w6_sample10_st, resolution = 0.4, n_iterations = 1000)
+
+##Load Signature gene, Signature genes are identified based on scran implemented in Giotto. Average expression of marker genes are calculated for each cell type
+load("../datasets/heart_development_ST/sig_exp.RData")
+
+##Deconvolution based on signature gene expression and Giotto object
+heart_w6_sample10_st <- runDWLSDeconv(gobject = heart_w6_sample10_st, sign_matrix = Sig)
+
+##plot pie
+plot_data <- as.data.frame(heart_w6_sample10_st@spatial_enrichment$DWLS)[-1]
+plot_col <- colnames(plot_data)
+plot_data$x <- as.numeric(as.character(heart_w6_sample10_st@spatial_locs$sdimx))
+plot_data$y <- as.numeric(as.character(heart_w6_sample10_st@spatial_locs$sdimy))
+min_x <- min(plot_data$x)
+plot_data$radius <- 0.4
+df <- data.frame()
+p <- ggplot(df) + geom_point() + xlim(min(plot_data$x)-1, max(plot_data$x)+1) + ylim(min(plot_data$y)-1, max(plot_data$y)+1)
+p + geom_scatterpie(aes(x=x, y=y, r=radius), data=plot_data, cols=plot_col, color=NA, alpha=.8) +
+  geom_scatterpie_legend(plot_data$radius, x=1, y=1) + theme_classic()
+```
