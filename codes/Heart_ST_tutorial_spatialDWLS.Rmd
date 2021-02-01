@@ -17,7 +17,7 @@ library(data.table)
 sc_meta<-read.table("../datasets/heart_development_ST/sc_meta.txt",header = F,row.names = 1)
 sc_data<-read.table("../datasets/heart_development_ST/all_cells_count_matrix_filtered.tsv",header = T,row.names = 1)
 
-my_python_path = "/Users/rd494/miniconda3/bin/python"
+my_python_path = "python path"
 instrs = createGiottoInstructions(python_path = my_python_path)
 heart_sc <- createGiottoObject(raw_exprs = sc_data,instructions = instrs)
 heart_sc <- normalizeGiotto(gobject = heart_sc, scalefactor = 6000, verbose = T)
