@@ -1,0 +1,49 @@
+---
+title: "Visium_Brain_deconvolution"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(Giotto)
+library(data.table)
+#############################test visium
+raw_matrix<-get10Xmatrix("raw_feature_bc_matrix/",gene_column_index = 2)
+spatial_results<-fread(file="tissue_positions_list.csv")
+python_path<-"python path"
+instrs = createGiottoInstructions(python_path = python_path,
+                                  show_plot = F, return_plot = T, save_plot = T,
+                                  dpi = 300, height = 9, width = 9)
+spatial_results = spatial_results[match(colnames(raw_matrix), V1)]
+colnames(spatial_results) = c('barcode', 'in_tissue', 'array_row', 'array_col', 'col_pxl', 'row_pxl')
+visium_brain <- createGiottoObject(raw_exprs = raw_matrix,spatial_locs = spatial_results[,.(row_pxl,-col_pxl)],
+                                   instructions = instrs,
+                                   cell_metadata = spatial_results[,.(in_tissue, array_row, array_col)])
+metadata = pDataDT(visium_brain)
+in_tissue_barcodes = metadata[in_tissue == 1]$cell_ID
+visium_brain = subsetGiotto(visium_brain, cell_ids = in_tissue_barcodes)
+visium_brain <- filterGiotto(gobject = visium_brain,
+                             expression_threshold = 1,
+                             gene_det_in_min_cells = 50,
+                             min_det_genes_per_cell = 1000,
+                             expression_values = c('raw'),
+                             verbose = T)
+########export filtered matrix
+visium_brain <- normalizeGiotto(gobject = visium_brain)
+visium_brain <- calculateHVG(gobject = visium_brain)
+gene_metadata = fDataDT(visium_brain)
+featgenes = gene_metadata[hvg == 'yes']$gene_ID
+visium_brain <- runPCA(gobject = visium_brain, genes_to_use = featgenes, scale_unit = F)
+signPCA(visium_brain, genes_to_use = featgenes, scale_unit = F)
+visium_brain <- runUMAP(visium_brain, dimensions_to_use = 1:10)
+visium_brain <- createNearestNetwork(gobject = visium_brain, dimensions_to_use = 1:10, k = 15)
+visium_brain <- doLeidenCluster(gobject = visium_brain, resolution = 0.4, n_iterations = 1000)
+plotUMAP(gobject = visium_brain, cell_color = 'leiden_clus', show_NN_network = T, point_size = 2)
+spatDimPlot(gobject = visium_brain, cell_color = 'leiden_clus',
+            dim_point_size = 1.5, spat_point_size = 1.5)
+```
+
+##Perform deconvolution
+```{r}
+load("sig_ct_exp.RData")
+visium_brain <- runDWLSDeconv(visium_brain,sign_matrix = Sig, n_cell = 20)
+```
